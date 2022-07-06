@@ -1,9 +1,9 @@
 package scorex.core.network.peer
 
 import java.net.{InetAddress, InetSocketAddress}
-
 import akka.actor.{Actor, ActorRef, ActorSystem, Props}
 import scorex.core.app.ScorexContext
+import scorex.core.network.NetworkController.ReceivableMessages.EmptyPeerDatabase
 import scorex.core.network._
 import scorex.core.settings.ScorexSettings
 import scorex.core.utils.NetworkUtils
@@ -23,7 +23,11 @@ class PeerManager(settings: ScorexSettings, scorexContext: ScorexContext) extend
 
   if (peerDatabase.isEmpty) {
     // fill database with peers from config file if empty
-    settings.network.knownPeers.foreach { address =>
+    fillPeerDatabase(settings.network.knownPeers)
+  }
+
+  private def fillPeerDatabase(addresses: Seq[InetSocketAddress]): Unit = {
+    addresses.foreach { address =>
       if (!isSelf(address)) {
         peerDatabase.addOrUpdateKnownPeer(PeerInfo.fromAddress(address))
       }
@@ -65,6 +69,9 @@ class PeerManager(settings: ScorexSettings, scorexContext: ScorexContext) extend
     case RemovePeer(address) =>
       log.info(s"$address removed from peers database")
       peerDatabase.remove(address)
+      if (peerDatabaseHasOnlyKnownPeersFromConfig()) {
+        sender() ! EmptyPeerDatabase
+      }
 
     case get: GetPeers[_] =>
       sender() ! get.choose(peerDatabase.knownPeers, peerDatabase.blacklistedPeers, scorexContext)
@@ -90,6 +97,8 @@ class PeerManager(settings: ScorexSettings, scorexContext: ScorexContext) extend
   private def isSelf(peerSpec: PeerSpec): Boolean = {
     peerSpec.declaredAddress.exists(isSelf) || peerSpec.localAddressOpt.exists(isSelf)
   }
+
+  private def peerDatabaseHasOnlyKnownPeersFromConfig(): Boolean = peerDatabase.knownPeers.size <= settings.network.knownPeers.size
 
 }
 

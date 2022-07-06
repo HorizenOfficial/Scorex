@@ -1,12 +1,12 @@
 package scorex.core.app
 
-import java.net.InetSocketAddress
-
 import akka.actor.{ActorRef, ActorSystem}
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.server.{ExceptionHandler, RejectionHandler, Route}
 import scorex.core.api.http.{ApiErrorHandler, ApiRejectionHandler, ApiRoute, CompositeHttpService}
 import scorex.core.network._
+import scorex.core.network.dns.DnsClientRef
+import scorex.core.network.dns.model.DnsClientInput
 import scorex.core.network.message._
 import scorex.core.network.peer.PeerManagerRef
 import scorex.core.settings.ScorexSettings
@@ -15,6 +15,7 @@ import scorex.core.utils.NetworkTimeProvider
 import scorex.core.{NodeViewHolder, PersistentNodeViewModifier}
 import scorex.util.ScorexLogging
 
+import java.net.InetSocketAddress
 import scala.concurrent.ExecutionContext
 
 trait Application extends ScorexLogging {
@@ -75,7 +76,7 @@ trait Application extends ScorexLogging {
     }
   }
 
-  val scorexContext = ScorexContext(
+  val scorexContext: ScorexContext = ScorexContext(
     messageSpecs = basicSpecs ++ additionalMessageSpecs,
     features = features,
     upnpGateway = upnpGateway,
@@ -83,13 +84,16 @@ trait Application extends ScorexLogging {
     externalNodeAddress = externalSocketAddress
   )
 
-  val peerManagerRef = PeerManagerRef(settings, scorexContext)
+  val peerManagerRef: ActorRef = PeerManagerRef(settings, scorexContext)
 
   val networkControllerRef: ActorRef = NetworkControllerRef(
     "networkController", settings.network, peerManagerRef, scorexContext)
 
+  val dnsClientParams = new DnsClientInput(settings.network.knownSeeders)
+  val dnsClient: ActorRef = DnsClientRef(dnsClientParams)
+
   val peerSynchronizer: ActorRef = PeerSynchronizerRef("PeerSynchronizer",
-    networkControllerRef, peerManagerRef, settings.network, featureSerializers)
+    networkControllerRef, peerManagerRef, dnsClient, settings.network, featureSerializers)
 
   lazy val combinedRoute: Route = CompositeHttpService(actorSystem, apiRoutes, settings.restApi, swaggerConfig).compositeRoute
 

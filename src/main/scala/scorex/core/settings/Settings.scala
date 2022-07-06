@@ -2,10 +2,10 @@ package scorex.core.settings
 
 import java.io.File
 import java.net.InetSocketAddress
-
 import com.typesafe.config.{Config, ConfigFactory}
 import net.ceedubs.ficus.Ficus._
 import net.ceedubs.ficus.readers.ArbitraryTypeReader._
+import scorex.core.network.dns.model.DnsSeederDomain
 import scorex.core.network.message.Message
 import scorex.core.utils.NetworkTimeProviderSettings
 import scorex.util.ScorexLogging
@@ -21,6 +21,7 @@ case class NetworkSettings(nodeName: String,
                            addedMaxDelay: Option[FiniteDuration],
                            localOnly: Boolean,
                            knownPeers: Seq[InetSocketAddress],
+                           knownSeeders: Seq[DnsSeederDomain],
                            bindAddress: InetSocketAddress,
                            maxConnections: Int,
                            connectionTimeout: FiniteDuration,

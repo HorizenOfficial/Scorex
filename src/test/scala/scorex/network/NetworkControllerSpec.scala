@@ -11,11 +11,13 @@ import org.scalatest.EitherValues._
 import org.scalatest.OptionValues._
 import org.scalatest.TryValues._
 import org.scalatest.matchers.should.Matchers
-import scorex.core.app.{Version, ScorexContext}
+import scorex.core.app.{ScorexContext, Version}
 import scorex.core.network.NetworkController.ReceivableMessages.{GetConnectedPeers, GetPeersStatus}
 import scorex.core.network._
+import scorex.core.network.dns.DnsClientRef
+import scorex.core.network.dns.model.DnsClientInput
 import scorex.core.network.message.{PeersSpec, _}
-import scorex.core.network.peer.{LocalAddressPeerFeature, PeerManagerRef, LocalAddressPeerFeatureSerializer, PeersStatus, SessionIdPeerFeature}
+import scorex.core.network.peer.{LocalAddressPeerFeature, LocalAddressPeerFeatureSerializer, PeerManagerRef, PeersStatus, SessionIdPeerFeature}
 import scorex.core.settings.ScorexSettings
 import scorex.core.utils.LocalTimeProvider
 
@@ -322,6 +324,9 @@ class NetworkControllerSpec extends NetworkTests {
     val messageSpecs = Seq(GetPeersSpec, peersSpec)
     val scorexContext = ScorexContext(messageSpecs, Seq.empty, upnp, timeProvider, externalAddr)
 
+    val dnsClientInput = new DnsClientInput(Seq())
+    val dnsClient = DnsClientRef(dnsClientInput)
+
     val peerManagerRef = PeerManagerRef(settings, scorexContext)
 
     val networkControllerRef: ActorRef = NetworkControllerRef(
@@ -329,7 +334,7 @@ class NetworkControllerSpec extends NetworkTests {
       peerManagerRef, scorexContext, tcpManagerProbe.testActor)
 
     val peerSynchronizer: ActorRef = PeerSynchronizerRef("PeerSynchronizer",
-      networkControllerRef, peerManagerRef, settings.network, featureSerializers)
+      networkControllerRef, peerManagerRef, dnsClient, settings.network, featureSerializers)
 
 
     tcpManagerProbe.expectMsg(Bind(networkControllerRef, settings.network.bindAddress, options = Nil))

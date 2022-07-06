@@ -1,7 +1,5 @@
 package scorex.core.network
 
-import java.net._
-
 import akka.actor._
 import akka.io.Tcp._
 import akka.io.{IO, Tcp}
@@ -9,15 +7,17 @@ import akka.pattern.ask
 import akka.util.Timeout
 import scorex.core.app.{ScorexContext, Version}
 import scorex.core.network.NodeViewSynchronizer.ReceivableMessages.{DisconnectedPeer, HandshakedPeer}
+import scorex.core.network.PeerSynchronizer.ReceivableMessages.GetNewPeers
 import scorex.core.network.message.Message.MessageCode
 import scorex.core.network.message.{Message, MessageSpec}
 import scorex.core.network.peer.PeerManager.ReceivableMessages._
-import scorex.core.network.peer.{LocalAddressPeerFeature, PeerInfo, PeerManager, PeersStatus, PenaltyType, SessionIdPeerFeature}
+import scorex.core.network.peer._
 import scorex.core.settings.NetworkSettings
 import scorex.core.utils.TimeProvider.Time
 import scorex.core.utils.{NetworkUtils, TimeProvider}
 import scorex.util.ScorexLogging
 
+import java.net._
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
 import scala.language.{existentials, postfixOps}
@@ -139,6 +139,9 @@ class NetworkController(settings: NetworkSettings,
 
     case Blacklisted(peerAddress) =>
       closeConnection(peerAddress)
+
+    case EmptyPeerDatabase() =>
+      context.system.eventStream.publish(GetNewPeers())
   }
 
   private def connectionEvents: Receive = {
@@ -500,6 +503,8 @@ object NetworkController {
     case class PenalizePeer(address: InetSocketAddress, penaltyType: PenaltyType)
 
     case object GetConnectedPeers
+
+    case class EmptyPeerDatabase()
 
     /**
       * Get p2p network status
