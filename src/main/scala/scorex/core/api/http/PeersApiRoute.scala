@@ -1,7 +1,5 @@
 package scorex.core.api.http
 
-import java.net.{InetAddress, InetSocketAddress}
-
 import akka.actor.{ActorRef, ActorRefFactory}
 import akka.http.scaladsl.server.Route
 import io.circe.generic.semiauto._
@@ -10,11 +8,12 @@ import io.circe.{Encoder, Json}
 import scorex.core.api.http.PeersApiRoute.{BlacklistedPeers, PeerInfoResponse, PeersStatusResponse}
 import scorex.core.network.ConnectedPeer
 import scorex.core.network.NetworkController.ReceivableMessages.{ConnectTo, GetConnectedPeers, GetPeersStatus}
-import scorex.core.network.peer.{PeerInfo, PeersStatus}
 import scorex.core.network.peer.PeerManager.ReceivableMessages.{GetAllPeers, GetBlacklistedPeers}
+import scorex.core.network.peer.{PeerInfo, PeersStatus}
 import scorex.core.settings.RESTApiSettings
 import scorex.core.utils.NetworkTimeProvider
 
+import java.net.{InetAddress, InetSocketAddress}
 import scala.concurrent.ExecutionContext
 
 case class PeersApiRoute(peerManager: ActorRef,
@@ -41,10 +40,13 @@ case class PeersApiRoute(peerManager: ActorRef,
       _.flatMap { con =>
         con.peerInfo.map { peerInfo =>
           PeerInfoResponse(
-            address = peerInfo.peerSpec.declaredAddress.map(_.toString).getOrElse(""),
+            remoteAddress = con.connectionId.remoteAddress.toString,
+            localAddress = Some(con.connectionId.localAddress.toString),
             lastMessage = con.lastMessage,
             lastHandshake = peerInfo.lastHandshake,
             name = peerInfo.peerSpec.nodeName,
+            agentName = peerInfo.peerSpec.agentName,
+            protocolVersion = peerInfo.peerSpec.protocolVersion.toString,
             connectionType = peerInfo.connectionType.map(_.toString)
           )
         }
@@ -90,19 +92,25 @@ case class PeersApiRoute(peerManager: ActorRef,
 
 object PeersApiRoute {
 
-  case class PeerInfoResponse(address: String,
+  case class PeerInfoResponse(remoteAddress: String,
+                              localAddress: Option[String],
                               lastMessage: Long,
                               lastHandshake: Long,
                               name: String,
+                              agentName: String,
+                              protocolVersion: String,
                               connectionType: Option[String])
 
   object PeerInfoResponse {
 
     def fromAddressAndInfo(address: InetSocketAddress, peerInfo: PeerInfo): PeerInfoResponse = PeerInfoResponse(
       address.toString,
+      None,
       0,
       peerInfo.lastHandshake,
       peerInfo.peerSpec.nodeName,
+      peerInfo.peerSpec.agentName,
+      peerInfo.peerSpec.protocolVersion.toString,
       peerInfo.connectionType.map(_.toString)
     )
   }
