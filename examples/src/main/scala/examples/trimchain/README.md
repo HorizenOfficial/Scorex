@@ -1,2 +1,0 @@
-TrimChain consensus protocol implementation
-===========================================

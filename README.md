@@ -47,8 +47,6 @@ Examples
 --------
 
 There are two examples of blockchain systems built with Scorex:
- * implementation of TwinsCoin, a hybrid (Proof-of-Work + Proof-of-Stake) cryptocurrency is provided in this repository,
-  please check [dedicated readme](examples/README.md).
  * [TreasuryCoin](https://github.com/input-output-hk/TreasuryCoin) is an experimental implementation of the perspective 
  treasury system described in [A Treasury System for Cryptocurrencies: Enabling Better Collaborative Intelligence](https://eprint.iacr.org/2018/435.pdf). 
  * [Ergo Platform](https://github.com/ergoplatform/ergo), a Proof-of-Work cryptocurrency and financial contracts 

@@ -3,10 +3,6 @@
 Sparkz comes with a dedicated module sparkz-testkit for supporting tests at different levels.
 Testkit contains property tests common for all blockchains and allow to test blockchain node for them.
 
-### Example:
-
-All test scenarios are combined in BlockchainSanity test, leaving generators to concrete blockchain implementation. This generators are implemented in [a test for the Hybrid example](https://github.com/HorizenOfficial/Sparkz/blob/master/examples/src/test/scala/hybrid/HybridSanity.scala).
-
 ### Implemented test scenarios
 - [x] Valid block should be successfully applied to history and available by id after that.
 - [x] Valid box should be successfully applied to state, it's available by id after that.
