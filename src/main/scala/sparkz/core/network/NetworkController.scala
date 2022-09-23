@@ -151,7 +151,9 @@ class NetworkController(settings: NetworkSettings,
       else peerManagerRef ! ConfirmConnection(connectionId, sender())
 
     case Connected(remoteAddress, _) =>
-      log.warn(s"Connection to peer $remoteAddress is already established")
+      val logMessage = if (connections.size >= settings.maxConnections) "Max connections limit reached"
+                       else s"Connection to peer $remoteAddress is already established"
+      log.warn(logMessage)
       sender() ! Close
 
     case ConnectionConfirmed(connectionId, handlerRef) =>
