@@ -1,37 +1,53 @@
 package sparkz.core.network.peer
 
-import java.net.InetSocketAddress
 import org.scalatest.Assertion
-import sparkz.core.network.Outgoing
+import sparkz.ObjectGenerators
 import sparkz.core.network.NetworkTests
+import sparkz.core.network.peer.PeerBucketStorage.{BucketConfig, NewPeerBucketStorage, TriedPeerBucketStorage}
 
+import java.net.InetSocketAddress
+import scala.collection.mutable
 import scala.concurrent.duration.DurationInt
-import scala.util.Random
 
-class InMemoryPeerDatabaseSpec extends NetworkTests {
+@SuppressWarnings(Array(
+  "org.wartremover.warts.Null",
+  "org.wartremover.warts.OptionPartial"
+))
+class InMemoryPeerDatabaseSpec extends NetworkTests with ObjectGenerators {
 
   private val peerAddress1 = new InetSocketAddress("1.1.1.1", 27017)
   private val peerAddress2 = new InetSocketAddress("2.2.2.2", 27017)
   private val storedPeersLimit = 10
+  private val nKey = 1234
+  private val bucketConfig: BucketConfig = BucketConfig(buckets = 10, bucketPositions = 10, bucketSubgroups = 10)
+  private val triedBucket: TriedPeerBucketStorage = TriedPeerBucketStorage(bucketConfig, nKey, timeProvider)
+  private val newBucket: NewPeerBucketStorage = NewPeerBucketStorage(bucketConfig, nKey, timeProvider)
+  private val bucketManager: BucketManager = new BucketManager(newBucket, triedBucket)
+  private val sourcePeer = connectedPeerGen(null).sample.get
 
   private def withDb(test: InMemoryPeerDatabase => Assertion): Assertion =
-    test(new InMemoryPeerDatabase(settings.network.copy(storedPeersLimit = storedPeersLimit, penaltySafeInterval = 1.seconds), timeProvider))
+    test(new InMemoryPeerDatabase(
+      settings.network.copy(storedPeersLimit = storedPeersLimit, penaltySafeInterval = 1.seconds),
+      timeProvider,
+      bucketManager,
+      mutable.Map.empty,
+      mutable.Map.empty))
 
   "new DB" should "be empty" in {
     withDb { db =>
       db.isEmpty shouldBe true
       db.blacklistedPeers.isEmpty shouldBe true
-      db.knownPeers.isEmpty shouldBe true
-      db.knownPeers.isEmpty shouldBe true
+      db.allPeers.isEmpty shouldBe true
+      db.allPeers.isEmpty shouldBe true
     }
   }
 
   it should "be non-empty after adding a peer" in {
     withDb { db =>
-      db.addOrUpdateKnownPeer(getPeerInfo(peerAddress1))
+      db.addOrUpdateKnownPeer(getPeerInfo(peerAddress1), Some(sourcePeer))
       db.isEmpty shouldBe false
       db.blacklistedPeers.isEmpty shouldBe true
-      db.knownPeers.isEmpty shouldBe false
+      db.allPeers.isEmpty shouldBe false
     }
   }
 
@@ -39,26 +55,26 @@ class InMemoryPeerDatabaseSpec extends NetworkTests {
     withDb { db =>
       val peerInfo = getPeerInfo(peerAddress1)
 
-      db.addOrUpdateKnownPeer(peerInfo)
-      db.knownPeers shouldBe Map(peerAddress1 -> peerInfo)
+      db.addOrUpdateKnownPeer(peerInfo, Some(sourcePeer))
+      db.allPeers shouldBe Map(peerAddress1 -> peerInfo)
     }
   }
 
   it should "return an updated peer after updating a peer" in {
     withDb { db =>
       val peerInfo = getPeerInfo(peerAddress1, Some("initialName"))
-      db.addOrUpdateKnownPeer(peerInfo)
+      db.addOrUpdateKnownPeer(peerInfo, Some(sourcePeer))
       val newPeerInfo = getPeerInfo(peerAddress1, Some("updatedName"))
-      db.addOrUpdateKnownPeer(newPeerInfo)
+      db.addOrUpdateKnownPeer(newPeerInfo, Some(sourcePeer))
 
-      db.knownPeers shouldBe Map(peerAddress1 -> newPeerInfo)
+      db.allPeers shouldBe Map(peerAddress1 -> newPeerInfo)
     }
   }
 
   it should "return a blacklisted peer after blacklisting" in {
     withDb { db =>
-      db.addOrUpdateKnownPeer(getPeerInfo(peerAddress1))
-      db.addOrUpdateKnownPeer(getPeerInfo(peerAddress2))
+      db.addOrUpdateKnownPeer(getPeerInfo(peerAddress1), Some(sourcePeer))
+      db.addOrUpdateKnownPeer(getPeerInfo(peerAddress2), Some(sourcePeer))
       db.addToBlacklist(peerAddress1, PenaltyType.PermanentPenalty)
 
       db.isBlacklisted(peerAddress1.getAddress) shouldBe true
@@ -70,20 +86,20 @@ class InMemoryPeerDatabaseSpec extends NetworkTests {
   it should "the blacklisted peer be absent in knownPeers" in {
     withDb { db =>
       val peerInfo1 = getPeerInfo(peerAddress1)
-      db.addOrUpdateKnownPeer(peerInfo1)
-      db.addOrUpdateKnownPeer(getPeerInfo(peerAddress2))
+      db.addOrUpdateKnownPeer(peerInfo1, Some(sourcePeer))
+      db.addOrUpdateKnownPeer(getPeerInfo(peerAddress2), Some(sourcePeer))
       db.addToBlacklist(peerAddress2, PenaltyType.PermanentPenalty)
 
-      db.knownPeers shouldBe Map(peerAddress1 -> peerInfo1)
+      db.allPeers shouldBe Map(peerAddress1 -> peerInfo1)
     }
   }
 
   it should "remove peers from db correctly" in {
     withDb { db =>
-      db.addOrUpdateKnownPeer(getPeerInfo(peerAddress1))
+      db.addOrUpdateKnownPeer(getPeerInfo(peerAddress1), Some(sourcePeer))
       db.isEmpty shouldBe false
       db.blacklistedPeers.isEmpty shouldBe true
-      db.knownPeers.isEmpty shouldBe false
+      db.allPeers.isEmpty shouldBe false
 
       db.remove(peerAddress1)
 
@@ -104,92 +120,6 @@ class InMemoryPeerDatabaseSpec extends NetworkTests {
       db.penaltyScore(peerAddress1) shouldBe PenaltyType.SpamPenalty.penaltyScore
       db.peerPenaltyScoreOverThreshold(peerAddress1, PenaltyType.MisbehaviorPenalty)
       db.penaltyScore(peerAddress1) shouldBe PenaltyType.SpamPenalty.penaltyScore
-    }
-  }
-
-  it should "not add more peers than configured by storedPeersLimit" in {
-    withDb { db =>
-
-      val ninePeers = generatePeers(9)
-      val oneMorePeer = generatePeers(1)
-      val fiveMorePeers = generatePeers(5)
-      db.addOrUpdateKnownPeers(ninePeers)
-      db.blacklistedPeers.isEmpty shouldBe true
-      db.knownPeers.size shouldBe 9
-
-      db.addOrUpdateKnownPeers(oneMorePeer)
-      db.blacklistedPeers.isEmpty shouldBe true
-      db.knownPeers.size shouldBe storedPeersLimit
-
-      db.addOrUpdateKnownPeers(fiveMorePeers)
-      db.blacklistedPeers.isEmpty shouldBe true
-      db.knownPeers.size shouldBe storedPeersLimit
-    }
-  }
-
-  it should "not replace existing peers if they are connected" in {
-    withDb { db =>
-      val peersLimit = storedPeersLimit
-      val nineConnectedPeers = generatePeers(peersLimit - 1).map(_.copy(connectionType = Some(Outgoing)))
-      val fiveMorePeers = generatePeers(5)
-      db.addOrUpdateKnownPeers(nineConnectedPeers)
-      db.blacklistedPeers.isEmpty shouldBe true
-      db.knownPeers.size shouldBe 9
-
-      db.addOrUpdateKnownPeers(fiveMorePeers)
-      db.blacklistedPeers.isEmpty shouldBe true
-      db.knownPeers.values should (contain allElementsOf nineConnectedPeers and have size storedPeersLimit)
-    }
-  }
-
-  it should "should replace oldest not-connected peers" in {
-    withDb { db =>
-      val tenPeersLimit = storedPeersLimit
-
-      val oldestFivePeers = generatePeers(5)
-      val medianFivePeers = generatePeers(5)
-      val newestFivePeers = generatePeers(5)
-
-      db.addOrUpdateKnownPeers(oldestFivePeers)
-      db.blacklistedPeers.isEmpty shouldBe true
-      db.knownPeers.values should (have size 5 and contain allElementsOf oldestFivePeers)
-
-      db.addOrUpdateKnownPeers(medianFivePeers)
-      db.blacklistedPeers.isEmpty shouldBe true
-      db.knownPeers.size shouldBe tenPeersLimit
-      db.knownPeers.values should (contain allElementsOf oldestFivePeers and contain allElementsOf medianFivePeers)
-
-      db.addOrUpdateKnownPeers(newestFivePeers)
-      db.blacklistedPeers.isEmpty shouldBe true
-      db.knownPeers.size shouldBe tenPeersLimit
-      db.knownPeers.values should (contain allElementsOf medianFivePeers and contain allElementsOf newestFivePeers)
-    }
-  }
-
-  it should "replace not-connected peers even if they are latest" in {
-    withDb { db =>
-      val tenPeersLimit = storedPeersLimit
-      val twoPeers = 2
-      val eightPeers = tenPeersLimit - 2
-
-      val eightConnectedPeers = generatePeers(eightPeers).map(_.copy(connectionType = Some(Outgoing)))
-      val twoNotConnected = generatePeers(twoPeers)
-      val twoMoreNotConnected = generatePeers(twoPeers)
-
-      db.addOrUpdateKnownPeers(eightConnectedPeers)
-      db.blacklistedPeers.isEmpty shouldBe true
-      db.knownPeers.size shouldBe eightPeers
-
-      db.addOrUpdateKnownPeers(twoNotConnected)
-      db.blacklistedPeers.isEmpty shouldBe true
-      db.knownPeers.size shouldBe tenPeersLimit
-      db.knownPeers.values should (contain allElementsOf eightConnectedPeers and contain allElementsOf twoNotConnected)
-
-
-      db.addOrUpdateKnownPeers(twoMoreNotConnected)
-      db.blacklistedPeers.isEmpty shouldBe true
-      db.knownPeers.size shouldBe tenPeersLimit
-      db.knownPeers.values should (contain allElementsOf eightConnectedPeers and contain allElementsOf twoMoreNotConnected)
     }
   }
 
@@ -227,19 +157,6 @@ class InMemoryPeerDatabaseSpec extends NetworkTests {
       val penalizeWithBan = db.peerPenaltyScoreOverThreshold(address, penaltyType)
 
       penalizeWithBan shouldBe true
-    }
-  }
-
-  private def generatePeers(amount: Int) = {
-    val random = Random
-    val base = (1 to 3).map(_ => random.nextInt(256)).mkString(".")
-    var counter = 1
-    (1 to amount).map { _ =>
-      val host = base + counter
-      counter += 1
-      getPeerInfo(
-        new InetSocketAddress(host, 0)
-      )
     }
   }
 

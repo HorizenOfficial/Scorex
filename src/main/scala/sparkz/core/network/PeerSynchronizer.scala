@@ -26,8 +26,8 @@ class PeerSynchronizer(val networkControllerRef: ActorRef,
   private val peersSpec = new PeersSpec(featureSerializers, settings.maxPeerSpecObjects)
 
   protected override val msgHandlers: PartialFunction[(MessageSpec[_], _, ConnectedPeer), Unit] = {
-    case (_: PeersSpec, peers: Seq[PeerSpec]@unchecked, _) if peers.cast[Seq[PeerSpec]].isDefined =>
-      addNewPeers(peers)
+    case (_: PeersSpec, peers: Seq[PeerSpec]@unchecked, sourcePeer: ConnectedPeer) if peers.cast[Seq[PeerSpec]].isDefined =>
+      addNewPeers(peers, sourcePeer)
 
     case (spec, _, remote) if spec.messageCode == GetPeersSpec.messageCode =>
       gossipPeers(remote)
@@ -61,8 +61,8 @@ class PeerSynchronizer(val networkControllerRef: ActorRef,
     *
     * @param peers sequence of peer specs describing a remote peers details
     */
-  private def addNewPeers(peers: Seq[PeerSpec]): Unit = {
-    peerManager ! AddPeersIfEmpty(peers)
+  private def addNewPeers(peers: Seq[PeerSpec], sourcePeer: ConnectedPeer): Unit = {
+    peerManager ! AddPeersIfEmpty(peers, sourcePeer)
   }
 
   /**

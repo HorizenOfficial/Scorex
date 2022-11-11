@@ -1,5 +1,7 @@
 package sparkz.core.network.peer
 
+import sparkz.core.network.ConnectedPeer
+
 import java.net.{InetAddress, InetSocketAddress}
 
 trait PeerDatabase {
@@ -12,12 +14,15 @@ trait PeerDatabase {
     * Add peer to the database, or update it
     *
     * @param peerInfo - peer record
+    * @param source - the peer that sent the peerInfo
     */
-  def addOrUpdateKnownPeer(peerInfo: PeerInfo): Unit
+  def addOrUpdateKnownPeer(peerInfo: PeerInfo, source: Option[ConnectedPeer]): Unit
 
-  def addOrUpdateKnownPeers(peersInfo: Seq[PeerInfo]): Unit
+  def addOrUpdateKnownPeers(peersInfo: Seq[PeerInfo], source: Option[ConnectedPeer]): Unit
 
-  def knownPeers: Map[InetSocketAddress, PeerInfo]
+  def allPeers: Map[InetSocketAddress, PeerInfo]
+
+  def randomPeersSubset: Map[InetSocketAddress, PeerInfo]
 
   def addToBlacklist(address: InetSocketAddress, penaltyType: PenaltyType): Unit
 
@@ -28,4 +33,6 @@ trait PeerDatabase {
   def isBlacklisted(address: InetAddress): Boolean
 
   def remove(address: InetSocketAddress): Unit
+
+  def peerPenaltyScoreOverThreshold(peer: InetSocketAddress, penaltyType: PenaltyType): Boolean
 }

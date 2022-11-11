@@ -15,18 +15,18 @@ import java.security.SecureRandom
   * Peer manager takes care of peers connected and in process, and also chooses a random peer to connect
   * Must be singleton
   */
-class PeerManager(settings: SparkzSettings, sparkzContext: SparkzContext) extends Actor with ScorexLogging {
+class PeerManager(settings: SparkzSettings, sparkzContext: SparkzContext, peerDatabase: PeerDatabase) extends Actor with ScorexLogging {
 
   import PeerManager.ReceivableMessages._
 
-  private val peerDatabase = new InMemoryPeerDatabase(settings.network, sparkzContext.timeProvider)
+  private var knownPeers: Map[InetSocketAddress, PeerInfo] = Map.empty
   private val knownPeersSet: Set[InetSocketAddress] = settings.network.knownPeers.toSet
 
   if (peerDatabase.isEmpty) {
     // fill database with peers from config file if empty
     knownPeersSet.foreach { address =>
       if (!isSelf(address)) {
-        peerDatabase.addOrUpdateKnownPeer(PeerInfo.fromAddress(address))
+        knownPeers += address -> PeerInfo.fromAddress(address)
       }
     }
   }
@@ -40,12 +40,12 @@ class PeerManager(settings: SparkzSettings, sparkzContext: SparkzContext) extend
 
     case ConfirmConnection(connectionId, handlerRef) =>
       log.info(s"Connection confirmation request: $connectionId")
-      if (peerDatabase.isBlacklisted(connectionId.remoteAddress)) sender() ! ConnectionDenied(connectionId, handlerRef)
+      if (peerDatabase.isBlacklisted(connectionId.remoteAddress.getAddress)) sender() ! ConnectionDenied(connectionId, handlerRef)
       else sender() ! ConnectionConfirmed(connectionId, handlerRef)
 
-    case AddOrUpdatePeer(peerInfo) =>
+    case AddOrUpdatePeer(peerInfo, source) =>
       // We have connected to a peer and got his peerInfo from him
-      if (!isSelf(peerInfo.peerSpec)) peerDatabase.addOrUpdateKnownPeer(peerInfo)
+      if (!isSelf(peerInfo.peerSpec)) peerDatabase.addOrUpdateKnownPeer(peerInfo, source)
 
     case Penalize(peer, penaltyType) =>
       log.info(s"$peer penalized, penalty: $penaltyType")
@@ -55,7 +55,7 @@ class PeerManager(settings: SparkzSettings, sparkzContext: SparkzContext) extend
         sender() ! Blacklisted(peer)
       }
 
-    case AddPeersIfEmpty(peersSpec) =>
+    case AddPeersIfEmpty(peersSpec, source) =>
       // We have received peers data from other peers. It might be modified and should not affect existing data if any
       val filteredPeers = peersSpec
         .collect {
@@ -64,23 +64,24 @@ class PeerManager(settings: SparkzSettings, sparkzContext: SparkzContext) extend
             log.info(s"New discovered peer: $peerInfo")
             peerInfo
         }
-      peerDatabase.addOrUpdateKnownPeers(filteredPeers)
+      peerDatabase.addOrUpdateKnownPeers(filteredPeers, Some(source))
 
     case RemovePeer(address) =>
-      if (!knownPeersSet(address)) {
-        peerDatabase.remove(address)
-        log.info(s"$address removed from peers database")
-      }
+      peerDatabase.remove(address)
+      log.info(s"$address removed from peers database")
+
+    case get: RandomPeerForConnectionExcluding =>
+      sender() ! get.choose(knownPeers, peerDatabase.randomPeersSubset, peerDatabase.blacklistedPeers, sparkzContext)
 
     case get: GetPeers[_] =>
-      sender() ! get.choose(peerDatabase.knownPeers, peerDatabase.blacklistedPeers, sparkzContext)
+      sender() ! get.choose(knownPeers, peerDatabase.allPeers, peerDatabase.blacklistedPeers, sparkzContext)
   }
 
   private def apiInterface: Receive = {
 
     case GetAllPeers =>
-      log.trace(s"Get all peers: ${peerDatabase.knownPeers}")
-      sender() ! peerDatabase.knownPeers
+      log.trace(s"Get all peers: ${peerDatabase.allPeers}")
+      sender() ! peerDatabase.allPeers
 
     case GetBlacklistedPeers =>
       sender() ! peerDatabase.blacklistedPeers
@@ -114,9 +115,13 @@ object PeerManager {
     case class Blacklisted(remote: InetSocketAddress)
 
     // peerListOperations messages
-    case class AddOrUpdatePeer(data: PeerInfo)
+    /**
+      * @param data: information about peer to be stored in PeerDatabase
+      * @param source: if the source is set, it means is a new peer, otherwise it's a peer to be moved into the tried
+      * */
+    case class AddOrUpdatePeer(data: PeerInfo, source: Option[ConnectedPeer] = None)
 
-    case class AddPeersIfEmpty(data: Seq[PeerSpec])
+    case class AddPeersIfEmpty(data: Seq[PeerSpec], source: ConnectedPeer)
 
     case class RemovePeer(address: InetSocketAddress)
 
@@ -125,6 +130,7 @@ object PeerManager {
       */
     trait GetPeers[T] {
       def choose(knownPeers: Map[InetSocketAddress, PeerInfo],
+                 peers: Map[InetSocketAddress, PeerInfo],
                  blacklistedPeers: Seq[InetAddress],
                  sparkzContext: SparkzContext): T
     }
@@ -137,42 +143,63 @@ object PeerManager {
     case class SeenPeers(howMany: Int) extends GetPeers[Seq[PeerInfo]] {
 
       override def choose(knownPeers: Map[InetSocketAddress, PeerInfo],
+                          peers: Map[InetSocketAddress, PeerInfo],
                           blacklistedPeers: Seq[InetAddress],
                           sparkzContext: SparkzContext): Seq[PeerInfo] = {
-        val recentlySeenNonBlacklisted = knownPeers.values.toSeq
+        val recentlySeenKnownPeers = knownPeers.values.toSeq
+          .filter { p =>
+            (p.connectionType.isDefined || p.lastHandshake > 0)
+          }
+        val recentlySeenNonBlacklisted = peers.values.toSeq
           .filter { p =>
             (p.connectionType.isDefined || p.lastHandshake > 0) &&
               !blacklistedPeers.exists(ip => p.peerSpec.declaredAddress.exists(_.getAddress == ip))
           }
-        Random.shuffle(recentlySeenNonBlacklisted).take(howMany)
+        Random.shuffle(recentlySeenKnownPeers ++ recentlySeenNonBlacklisted).take(howMany)
       }
     }
 
     case object GetAllPeers extends GetPeers[Map[InetSocketAddress, PeerInfo]] {
 
       override def choose(knownPeers: Map[InetSocketAddress, PeerInfo],
+                          peers: Map[InetSocketAddress, PeerInfo],
                           blacklistedPeers: Seq[InetAddress],
-                          sparkzContext: SparkzContext): Map[InetSocketAddress, PeerInfo] = knownPeers
+                          sparkzContext: SparkzContext): Map[InetSocketAddress, PeerInfo] = knownPeers ++ peers
     }
 
-    case class RandomPeerExcluding(excludedPeers: Seq[Option[InetSocketAddress]]) extends GetPeers[Option[PeerInfo]] {
+    case class RandomPeerForConnectionExcluding(excludedPeers: Seq[Option[InetSocketAddress]]) extends GetPeers[Option[PeerInfo]] {
       private val secureRandom = new SecureRandom()
 
       override def choose(knownPeers: Map[InetSocketAddress, PeerInfo],
+                          peers: Map[InetSocketAddress, PeerInfo],
                           blacklistedPeers: Seq[InetAddress],
                           sparkzContext: SparkzContext): Option[PeerInfo] = {
-        val candidates = knownPeers.values.filterNot { p =>
-          excludedPeers.contains(p.peerSpec.address) ||
-            blacklistedPeers.exists(addr => p.peerSpec.address.map(_.getAddress).contains(addr))
+        var response: Option[PeerInfo] = None
+
+        val knownPeersCandidates = knownPeers.values.filterNot { p =>
+          excludedPeers.contains(p.peerSpec.address)
         }.toSeq
-        if (candidates.nonEmpty) Some(candidates(secureRandom.nextInt(candidates.size)))
-        else None
+
+        if (knownPeersCandidates.nonEmpty) {
+          response = Some(knownPeersCandidates(secureRandom.nextInt(knownPeersCandidates.size)))
+        } else {
+          val candidates = peers.values.filterNot { p =>
+            excludedPeers.contains(p.peerSpec.address) ||
+              blacklistedPeers.exists(addr => p.peerSpec.address.map(_.getAddress).contains(addr))
+          }.toSeq
+
+          if (candidates.nonEmpty)
+            response = Some(candidates(secureRandom.nextInt(candidates.size)))
+        }
+
+        response
       }
     }
 
     case object GetBlacklistedPeers extends GetPeers[Seq[InetAddress]] {
 
       override def choose(knownPeers: Map[InetSocketAddress, PeerInfo],
+                          peers: Map[InetSocketAddress, PeerInfo],
                           blacklistedPeers: Seq[InetAddress],
                           sparkzContext: SparkzContext): Seq[InetAddress] = blacklistedPeers
     }
@@ -183,18 +210,18 @@ object PeerManager {
 
 object PeerManagerRef {
 
-  def props(settings: SparkzSettings, sparkzContext: SparkzContext): Props = {
-    Props(new PeerManager(settings, sparkzContext))
+  def props(settings: SparkzSettings, sparkzContext: SparkzContext, peerDatabase: PeerDatabase): Props = {
+    Props(new PeerManager(settings, sparkzContext, peerDatabase))
   }
 
-  def apply(settings: SparkzSettings, sparkzContext: SparkzContext)
+  def apply(settings: SparkzSettings, sparkzContext: SparkzContext, peerDatabase: PeerDatabase)
            (implicit system: ActorSystem): ActorRef = {
-    system.actorOf(props(settings, sparkzContext))
+    system.actorOf(props(settings, sparkzContext, peerDatabase))
   }
 
-  def apply(name: String, settings: SparkzSettings, sparkzContext: SparkzContext)
+  def apply(name: String, settings: SparkzSettings, sparkzContext: SparkzContext, peerDatabase: PeerDatabase)
            (implicit system: ActorSystem): ActorRef = {
-    system.actorOf(props(settings, sparkzContext), name)
+    system.actorOf(props(settings, sparkzContext, peerDatabase), name)
   }
 
 }
