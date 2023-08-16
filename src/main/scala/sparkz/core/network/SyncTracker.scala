@@ -54,6 +54,11 @@ class SyncTracker(nvsRef: ActorRef,
   def updateStatus(peer: ConnectedPeer, status: HistoryComparisonResult): Unit = {
     val seniorsBefore = numOfSeniors()
     statuses += peer -> status
+
+    if (isFirstTimeTrackingPeer(peer)) {
+      updateLastSyncSentTime(peer)
+    }
+
     val seniorsAfter = numOfSeniors()
 
     // todo: we should also send NoBetterNeighbour signal when all the peers around are not seniors initially
@@ -66,6 +71,10 @@ class SyncTracker(nvsRef: ActorRef,
     if (seniorsBefore == 0 && seniorsAfter > 0) {
       context.system.eventStream.publish(BetterNeighbourAppeared)
     }
+  }
+
+  private def isFirstTimeTrackingPeer(peer: ConnectedPeer) = {
+    !lastSyncSentTime.contains(peer)
   }
 
   //todo: combine both?
@@ -91,7 +100,6 @@ class SyncTracker(nvsRef: ActorRef,
 
   private def outdatedPeers(): Seq[ConnectedPeer] =
     lastSyncSentTime.filter(t => (timeProvider.time() - t._2).millis > maxInterval()).keys.toSeq
-
 
   @nowarn def peersByStatus: Map[HistoryComparisonResult, Iterable[ConnectedPeer]] =
     statuses.groupBy(_._2).mapValues(_.keys).toMap

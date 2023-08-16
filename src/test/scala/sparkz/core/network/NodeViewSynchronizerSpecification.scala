@@ -1,10 +1,12 @@
 package sparkz.core.network
 
 import akka.actor.{ActorRef, ActorSystem, Props}
-import akka.testkit.TestProbe
+import akka.testkit.{TestActorRef, TestProbe}
+import sparkz.ObjectGenerators
 import sparkz.core.NodeViewHolder.ReceivableMessages.{GetNodeViewChanges, TransactionsFromRemote}
+import sparkz.core.consensus.History.Unknown
 import sparkz.core.network.NetworkController.ReceivableMessages.{PenalizePeer, RegisterMessageSpecs, SendToNetwork}
-import sparkz.core.network.NodeViewSynchronizer.ReceivableMessages.{ChangedHistory, ChangedMempool, FailedTransaction, SuccessfulTransaction}
+import sparkz.core.network.NodeViewSynchronizer.ReceivableMessages._
 import sparkz.core.network.message._
 import sparkz.core.network.peer.PenaltyType
 import sparkz.core.network.peer.PenaltyType.MisbehaviorPenalty
@@ -14,23 +16,29 @@ import sparkz.core.transaction.Transaction
 import sparkz.core.utils.NetworkTimeProvider
 import sparkz.core.{ModifierTypeId, NodeViewModifier}
 import sparkz.util.ModifierId
+import sparkz.util.serialization.{Reader, Writer}
 
 import java.net.InetSocketAddress
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration.DurationInt
 import scala.util.{Failure, Success}
 
-class NodeViewSynchronizerSpecification extends NetworkTests with TestImplementations {
+class NodeViewSynchronizerSpecification extends NetworkTests with TestImplementations with ObjectGenerators {
 
   implicit val actorSystem: ActorSystem = ActorSystem()
   implicit val executionContext: ExecutionContext = actorSystem.dispatchers.lookup("sparkz.executionContext")
   private val modifiersSpec = new ModifiersSpec(1024 * 1024)
   private val requestModifierSpec = new RequestModifierSpec(settings.network.maxInvObjects)
+  private val syncSpec = new SyncInfoMessageSpec[TestSyncInfo](new SparkzSerializer[TestSyncInfo] {
+    override def serialize(obj: TestSyncInfo, w: Writer): Unit = {}
+
+    override def parse(r: Reader): TestSyncInfo = new TestSyncInfo
+  })
   private val invSpec = new InvSpec(settings.network.maxInvObjects)
   private val (synchronizer, networkController, viewHolder) = createNodeViewSynchronizer(settings)
   private val peerProbe = TestProbe()
   private val peer = ConnectedPeer(ConnectionId(new InetSocketAddress(10), new InetSocketAddress(11), Incoming), peerProbe.ref, 0L, None)
-  private val messageSerializer = new MessageSerializer(Seq(modifiersSpec, invSpec, requestModifierSpec),
+  private val messageSerializer = new MessageSerializer(Seq(modifiersSpec, invSpec, requestModifierSpec, syncSpec),
                                                         settings.network.magicBytes,
                                                         settings.network.messageLengthBytesLimit)
 
@@ -239,6 +247,24 @@ class NodeViewSynchronizerSpecification extends NetworkTests with TestImplementa
       networkController.expectNoMessage()
     }
 
+  it should "when HandshakedPeer message is received, statusTracker should add the peer" in {
+    // Arrange
+    val nodeViewSynchronizerRef = createNodeViewSynchronizerAsTestActorRef(settings)
+    val nodeViewSynchronizer = nodeViewSynchronizerRef.underlyingActor
+
+    val statusTrackerField = classOf[NodeViewSynchronizer[_, _, _, _, _, _]].getDeclaredField("statusTracker")
+    statusTrackerField.setAccessible(true)
+    val statusTracker = statusTrackerField.get(nodeViewSynchronizer).asInstanceOf[SyncTracker]
+
+    // Act
+    nodeViewSynchronizerRef ! HandshakedPeer(peer)
+
+    // Assert
+    val peersStatus = statusTracker.peersByStatus
+    peersStatus.nonEmpty should be(true)
+    peersStatus(Unknown) should be(Set(peer))
+  }
+
   def setupHistoryAndMempoolReaders(synchronizer: ActorRef): Unit = {
     val history = new TestHistory
     val mempool = new TestMempool {
@@ -295,5 +321,40 @@ class NodeViewSynchronizerSpecification extends NetworkTests with TestImplementa
     viewHolderProbe.expectMsgType[GetNodeViewChanges](5000.millis)
 
     (nodeViewSynchronizerRef, networkControllerProbe, viewHolderProbe)
+  }
+
+  private def createNodeViewSynchronizerAsTestActorRef(settings: SparkzSettings): TestActorRef[NodeViewSynchronizer[_, _, _, _, _, _]] = {
+    val networkControllerProbe = TestProbe()
+    val viewHolderProbe = TestProbe()
+    val timeProvider = new NetworkTimeProvider(settings.ntp)
+
+    val modifierSerializers: Map[ModifierTypeId, SparkzSerializer[_ <: NodeViewModifier]] =
+      Map(Transaction.ModifierTypeId -> TestTransactionSerializer)
+
+    TestActorRef(Props(
+      new NodeViewSynchronizer[TestTransaction,
+        TestSyncInfo,
+        TestSyncInfoMessageSpec.type,
+        TestModifier,
+        TestHistory,
+        TestMempool
+      ]
+      (
+        networkControllerProbe.ref,
+        viewHolderProbe.ref,
+        TestSyncInfoMessageSpec,
+        settings.network,
+        timeProvider,
+        modifierSerializers
+      ) {
+        override val deliveryTracker: DeliveryTracker = new DeliveryTracker(context.system, settings.network, self) {
+          override def status(modifierId: ModifierId): ModifiersStatus = ModifiersStatus.Requested
+
+          override private[network] def clearStatusForModifier(id: ModifierId, oldStatus: ModifiersStatus): Unit = {}
+
+          override def setInvalid(modifierId: ModifierId): Option[ConnectedPeer] = Some(peer)
+        }
+      }
+    ))
   }
 }

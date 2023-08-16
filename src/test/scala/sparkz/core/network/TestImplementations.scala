@@ -2,7 +2,7 @@ package sparkz.core.network
 
 
 import sparkz.core.{ModifierTypeId, PersistentNodeViewModifier}
-import sparkz.core.consensus.History.ModifierIds
+import sparkz.core.consensus.History.{ModifierIds, Older}
 import sparkz.core.consensus.{History, HistoryReader, ModifierSemanticValidity, SyncInfo}
 import sparkz.core.network.message.SyncInfoMessageSpec
 import sparkz.core.serialization.SparkzSerializer
@@ -46,9 +46,9 @@ trait TestImplementations {
     override def modifierById(modifierId: sparkz.util.ModifierId): Option[TestModifier] = ???
     override def isSemanticallyValid(modifierId: sparkz.util.ModifierId): ModifierSemanticValidity = ???
     override def openSurfaceIds(): Seq[sparkz.util.ModifierId] = ???
-    override def continuationIds(info: TestSyncInfo, size: Int): ModifierIds = ???
-    override def syncInfo: TestSyncInfo = ???
-    override def compare(other: TestSyncInfo): History.HistoryComparisonResult = ???
+    override def continuationIds(info: TestSyncInfo, size: Int): ModifierIds = Seq()
+    override def syncInfo: TestSyncInfo = new TestSyncInfo
+    override def compare(other: TestSyncInfo): History.HistoryComparisonResult = Older
     override type NVCT = this.type
   }
 
