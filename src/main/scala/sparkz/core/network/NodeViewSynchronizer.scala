@@ -163,13 +163,18 @@ class NodeViewSynchronizer[TX <: Transaction, SI <: SyncInfo, SIS <: SyncInfoMes
 
   protected def getLocalSyncInfo: Receive = {
     case SendLocalSyncInfo =>
+      logger.info("SYNC INFO: SendLocalSyncInfo task fired")
       historyReaderOpt.foreach(sendSync(statusTracker, _))
   }
 
   protected def sendSync(syncTracker: SyncTracker, history: HR): Unit = {
+    logger.info("SYNC INFO: Trying to send sync info")
     val peers = statusTracker.peersToSyncWith()
     if (peers.nonEmpty) {
+      logger.info(s"SYNC INFO: Sending sync info to peers $peers")
       networkControllerRef ! SendToNetwork(Message(syncInfoSpec, Right(history.syncInfo), None), SendToPeers(peers))
+    } else {
+      logger.info("SYNC INFO: No peers to send sync info to")
     }
   }
 
@@ -179,6 +184,7 @@ class NodeViewSynchronizer[TX <: Transaction, SI <: SyncInfo, SIS <: SyncInfoMes
 
   //sync info is coming from another node
   protected def processSync(syncInfo: SI, remote: ConnectedPeer): Unit = {
+    log.info(s"SYNC INFO: Got sync info from $remote: $syncInfo")
     historyReaderOpt match {
       case Some(historyReader) =>
         val ext = historyReader.continuationIds(syncInfo, networkSettings.desiredInvObjects)
