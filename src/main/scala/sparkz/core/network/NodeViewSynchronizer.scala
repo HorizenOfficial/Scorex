@@ -185,7 +185,7 @@ class NodeViewSynchronizer[TX <: Transaction, SI <: SyncInfo, SIS <: SyncInfoMes
 
   //sync info is coming from another node
   protected def processSync(syncInfo: SI, remote: ConnectedPeer): Unit = {
-    log.info(s"SYNC INFO: Got sync info from $remote: $syncInfo")
+    log.info(s"SYNC INFO: Got sync info from $remote")
     historyReaderOpt match {
       case Some(historyReader) =>
         val ext = historyReader.continuationIds(syncInfo, networkSettings.desiredInvObjects)
