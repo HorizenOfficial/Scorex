@@ -89,6 +89,7 @@ class NodeViewSynchronizer[TX <: Transaction, SI <: SyncInfo, SIS <: SyncInfoMes
     viewHolderRef ! GetNodeViewChanges(history = true, state = false, vault = false, mempool = true)
 
     statusTracker.scheduleSendSyncInfo()
+    logger.info("NodeViewSynchronizer preStart() complete")
   }
 
   private def readersOpt: Option[(HR, MR)] = historyReaderOpt.flatMap(h => mempoolReaderOpt.map(mp => (h, mp)))
