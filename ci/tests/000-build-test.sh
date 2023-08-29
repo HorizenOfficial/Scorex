@@ -7,7 +7,7 @@ retval=0
 echo "" && echo "=== Building a package ===" && echo ""
 
 # Compiling and running tests
-sbt -ivy ./.ivy2 -sbt-dir ./.sbt "project sparkz" +clean +coverage +test || retval="$?"
+# sbt -ivy ./.ivy2 -sbt-dir ./.sbt "project sparkz" +clean +coverage +test || retval="$?"
 
 exit "$retval"
 

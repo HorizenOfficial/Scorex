@@ -83,6 +83,7 @@ class NetworkController(settings: NetworkSettings,
 
   override def receive: Receive =
     bindingLogic orElse
+      scheduleConnectingCommand orElse
       businessLogic orElse
       peerCommands orElse
       connectionEvents orElse
@@ -92,13 +93,19 @@ class NetworkController(settings: NetworkSettings,
   private def bindingLogic: Receive = {
     case Bound(_) =>
       log.info("Successfully bound to the port " + settings.bindAddress.getPort)
-      scheduleConnectionToPeer()
-      scheduleDroppingDeadConnections()
+
 
     case CommandFailed(_: Bind) =>
       log.error("Network port " + settings.bindAddress.getPort + " already in use!")
       java.lang.System.exit(1) // Terminate node if port is in use
       context stop self
+
+  }
+
+  def scheduleConnectingCommand: Receive = {
+    case ScheduleConnectingPeers =>
+      scheduleConnectionToPeer()
+      scheduleDroppingDeadConnections()
   }
 
   private def networkTime(): Time = sparkzContext.timeProvider.time()
@@ -582,6 +589,8 @@ object NetworkController {
     case class GetFilteredConnectedPeers(sendingStrategy: SendingStrategy, version: Version)
 
     case object GetConnectedPeers
+
+    case object ScheduleConnectingPeers
 
     /**
       * Get p2p network status

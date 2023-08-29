@@ -5,7 +5,7 @@ import sparkz.core.NodeViewHolder.ReceivableMessages.{GetNodeViewChanges, Modifi
 import sparkz.core.consensus.History._
 import sparkz.core.consensus.{History, HistoryReader, SyncInfo}
 import sparkz.core.network.ModifiersStatus.Requested
-import sparkz.core.network.NetworkController.ReceivableMessages.{PenalizePeer, RegisterMessageSpecs, SendToNetwork}
+import sparkz.core.network.NetworkController.ReceivableMessages.{PenalizePeer, RegisterMessageSpecs, ScheduleConnectingPeers, SendToNetwork}
 import sparkz.core.network.NodeViewSynchronizer.ReceivableMessages._
 import sparkz.core.network.message._
 import sparkz.core.network.peer.PenaltyType
@@ -74,6 +74,8 @@ class NodeViewSynchronizer[TX <: Transaction, SI <: SyncInfo, SIS <: SyncInfoMes
     // register as a handler for synchronization-specific types of messages
     val messageSpecs: Seq[MessageSpec[_]] = Seq(invSpec, requestModifierSpec, modifiersSpec, syncInfoSpec)
     networkControllerRef ! RegisterMessageSpecs(messageSpecs, self)
+    // schedule connection to peers
+    networkControllerRef ! ScheduleConnectingPeers
 
     // register as a listener for peers got connected (handshaked) or disconnected
     context.system.eventStream.subscribe(self, classOf[HandshakedPeer])
