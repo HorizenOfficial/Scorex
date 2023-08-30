@@ -260,7 +260,7 @@ class NetworkController(settings: NetworkSettings,
     * Schedule a periodic connection to a random known peer
     */
   private def scheduleConnectionToPeer(): Unit = {
-    context.system.scheduler.scheduleWithFixedDelay(5.seconds, tryNewConnectionAttemptDelay) {
+    context.system.scheduler.scheduleWithFixedDelay(50.millis, tryNewConnectionAttemptDelay) {
       () => {
         if (canEstablishNewOutgoingConnection) {
           log.trace(s"Looking for a new random connection")
